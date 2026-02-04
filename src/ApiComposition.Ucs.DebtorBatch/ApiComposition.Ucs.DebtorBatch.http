@@ -1,0 +1,6 @@
+@ApiComposition.Ucs.DebtorBatch_HostAddress = http://localhost:5182
+
+GET {{ApiComposition.Ucs.DebtorBatch_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
