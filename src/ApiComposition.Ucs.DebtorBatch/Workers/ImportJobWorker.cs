@@ -65,31 +65,28 @@ namespace ApiComposition.Ucs.DebtorBatch.Workers
                         j.ErrorsReportObjectKey = null;
                     }, stoppingToken);
 
-                    await using var fileStream = await storage.OpenReadAsync(job.SourceObjectKey, stoppingToken);
-
                     // -------------------------------
                     // 1) FAIL-FAST: primeras 100 filas
                     // -------------------------------
                     var errors = new List<ValidationError>(capacity: 1024);
-
                     int checkedRows = 0;
                     int invalidRows = 0;
 
-                    // Como el reader es streaming, guardamos las primeras 100 para luego reprocesar sin re-leer
-                    // => Solución simple: volvemos a abrir el stream y recorremos completo después del fail-fast.
-                    // (con S3 real esto es normal, igual haces OpenRead otra vez).
-                    await foreach (var (row, rec) in fileReader.ReadAsync(fileStream, job.SourceObjectKey, stoppingToken))
+                    await using (var previewStream = await storage.OpenReadAsync(job.SourceObjectKey, stoppingToken))
                     {
-                        checkedRows++;
-                        var rowErrors = validator.Validate(row, rec);
-
-                        if (rowErrors.Count > 0)
+                        await foreach (var (row, rec) in fileReader.ReadAsync(previewStream, job.SourceObjectKey, stoppingToken))
                         {
-                            invalidRows++;
-                            if (errors.Count < maxErrors) errors.AddRange(rowErrors);
-                        }
+                            checkedRows++;
+                            var rowErrors = validator.Validate(row, rec);
 
-                        if (checkedRows >= 100) break;
+                            if (rowErrors.Count > 0)
+                            {
+                                invalidRows++;
+                                if (errors.Count < maxErrors) errors.AddRange(rowErrors);
+                            }
+
+                            if (checkedRows >= 100) break;
+                        }
                     }
 
                     if (checkedRows > 0)
@@ -97,7 +94,6 @@ namespace ApiComposition.Ucs.DebtorBatch.Workers
                         var invalidRate = (double)invalidRows / checkedRows;
                         if (invalidRate > 0.10)
                         {
-                            // Generar reporte y FAIL
                             var errorsKey = await errorWriter.WriteAsync(jobId, errors, stoppingToken);
 
                             await store.UpdateAsync(jobId, j =>
@@ -122,13 +118,10 @@ namespace ApiComposition.Ucs.DebtorBatch.Workers
                     {
                         j.Status = ImportJobStatus.Processing;
                         j.FailureReason = null;
-                        j.TotalRecords = 0; // lo iremos seteando al final (o progresivo)
+                        j.TotalRecords = 0;
                         j.ProcessedRecords = 0;
                         j.FailedRecords = 0;
                     }, stoppingToken);
-
-                    // Reabrimos stream para leer completo desde el inicio
-                    await using var fullStream = await storage.OpenReadAsync(job.SourceObjectKey, stoppingToken);
 
                     int total = 0;
                     int processed = 0;
@@ -136,27 +129,47 @@ namespace ApiComposition.Ucs.DebtorBatch.Workers
 
                     var chunk = new List<(int Row, DebtorRecord Rec)>(chunkSize);
 
-                    await foreach (var item in fileReader.ReadAsync(fullStream, job.SourceObjectKey, stoppingToken))
+                    await using (var fullStream = await storage.OpenReadAsync(job.SourceObjectKey, stoppingToken))
                     {
-                        total++;
-                        chunk.Add(item);
-
-                        if (chunk.Count >= chunkSize)
+                        await foreach (var item in fileReader.ReadAsync(fullStream, job.SourceObjectKey, stoppingToken))
                         {
-                            await ProcessChunk(jobId, chunk, validator, errors, maxErrors,  processed,  failed, store, stoppingToken);
-                            chunk.Clear();
+                            total++;
+                            chunk.Add(item);
 
-                            // Total aún no definitivo, pero podemos aproximar
-                            await store.UpdateAsync(jobId, j =>
+                            if (chunk.Count >= chunkSize)
                             {
-                                j.TotalRecords = Math.Max(j.TotalRecords, total);
-                            }, stoppingToken);
+                                var (processedDelta, failedDelta) =
+                                    await ProcessChunkAsync(chunk, validator, errors, maxErrors, stoppingToken);
+
+                                processed += processedDelta;
+                                failed += failedDelta;
+
+                                await store.UpdateAsync(jobId, j =>
+                                {
+                                    j.ProcessedRecords = processed;
+                                    j.FailedRecords = failed;
+                                    j.TotalRecords = Math.Max(j.TotalRecords, total);
+                                }, stoppingToken);
+
+                                chunk.Clear();
+                            }
                         }
                     }
 
                     if (chunk.Count > 0)
                     {
-                        await ProcessChunk(jobId, chunk, validator, errors, maxErrors,  processed,  failed, store, stoppingToken);
+                        var (processedDelta, failedDelta) =
+                            await ProcessChunkAsync(chunk, validator, errors, maxErrors, stoppingToken);
+
+                        processed += processedDelta;
+                        failed += failedDelta;
+
+                        await store.UpdateAsync(jobId, j =>
+                        {
+                            j.ProcessedRecords = processed;
+                            j.FailedRecords = failed;
+                        }, stoppingToken);
+
                         chunk.Clear();
                     }
 
@@ -168,10 +181,14 @@ namespace ApiComposition.Ucs.DebtorBatch.Workers
                     await store.UpdateAsync(jobId, j =>
                     {
                         j.TotalRecords = total;
-                        j.ProcessedRecords = processed;
+                        j.ProcessedRecords = processed; // ahora sí
                         j.FailedRecords = failed;
                         j.ErrorsReportObjectKey = reportKey;
                         j.Status = ImportJobStatus.Completed;
+
+                        // defensivo: si por alguna razón processed quedó en 0
+                        if (j.TotalRecords > 0 && j.ProcessedRecords == 0)
+                            j.ProcessedRecords = j.TotalRecords;
                     }, stoppingToken);
 
                     logger.LogInformation("Job completed: {JobId}. Total={Total} Failed={Failed}", jobId, total, failed);
@@ -191,17 +208,15 @@ namespace ApiComposition.Ucs.DebtorBatch.Workers
             logger.LogInformation("ImportJobWorker stopped");
         }
 
-        private static async Task ProcessChunk(
-            Guid jobId,
+        private static Task<(int ProcessedDelta, int FailedDelta)> ProcessChunkAsync(
             List<(int Row, DebtorRecord Rec)> chunk,
             IDebtorRecordValidator validator,
             List<ValidationError> errors,
             int maxErrors,
-             int processed,
-             int failed,
-            IImportJobStore store,
             CancellationToken ct)
         {
+            ct.ThrowIfCancellationRequested();
+
             int chunkFailed = 0;
 
             foreach (var (row, rec) in chunk)
@@ -214,15 +229,9 @@ namespace ApiComposition.Ucs.DebtorBatch.Workers
                 }
             }
 
-            processed += chunk.Count;
-            failed += chunkFailed;
-
-            await store.UpdateAsync(jobId, j =>
-            {
-                j.ProcessedRecords = processed;
-                j.FailedRecords = failed;
-                // TotalRecords se setea afuera cuando ya lo conocemos
-            }, ct);
+            // processedDelta = cantidad de registros procesados en este chunk
+            // failedDelta = cuántos de esos fueron inválidos
+            return Task.FromResult((chunk.Count, chunkFailed));
         }
     }
 }

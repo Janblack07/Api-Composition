@@ -22,7 +22,7 @@ namespace ApiComposition.Ucs.DebtorBatch.Infrastructure
         public Task<string> GetDownloadUrlAsync(string objectKey, TimeSpan ttl, CancellationToken ct = default)
         {
             // DEV: en PROD será presigned S3
-            var url = $"/dev-download/{Uri.EscapeDataString(objectKey)}";
+            var url = $"/import/dev-download/{Uri.EscapeDataString(objectKey)}";
             return Task.FromResult(url);
         }
         public Task<Stream> OpenReadAsync(string objectKey, CancellationToken ct = default)
