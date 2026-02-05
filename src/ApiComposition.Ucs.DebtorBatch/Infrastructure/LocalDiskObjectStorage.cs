@@ -25,5 +25,17 @@ namespace ApiComposition.Ucs.DebtorBatch.Infrastructure
             var url = $"/dev-download/{Uri.EscapeDataString(objectKey)}";
             return Task.FromResult(url);
         }
+        public Task<Stream> OpenReadAsync(string objectKey, CancellationToken ct = default)
+        {
+            // Seguridad: evita path traversal
+            var safeKey = Path.GetFileName(objectKey); // elimina cualquier ../ o subcarpetas
+            var path = Path.Combine(_root, safeKey);
+
+            if (!File.Exists(path))
+                throw new FileNotFoundException("Object not found in local storage.", path);
+
+            Stream s = File.OpenRead(path);
+            return Task.FromResult(s);
+        }
     }
 }

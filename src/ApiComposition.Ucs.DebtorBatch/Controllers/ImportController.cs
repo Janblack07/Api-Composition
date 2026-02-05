@@ -4,6 +4,7 @@ using ApiComposition.Ucs.DebtorBatch.Ports;
 using ApiComposition.Ucs.DebtorBatch.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.StaticFiles;
 
 namespace ApiComposition.Ucs.DebtorBatch.Controllers
 {
@@ -96,9 +97,11 @@ namespace ApiComposition.Ucs.DebtorBatch.Controllers
                 job.JobId,
                 job.Status,
                 job.CreatedAtUtc,
+                job.UpdatedAtUtc,
                 job.TotalRecords,
                 job.ProcessedRecords,
                 job.FailedRecords,
+                job.ProgressPercentage,
                 job.FailureReason
             ));
         }
@@ -121,6 +124,19 @@ namespace ApiComposition.Ucs.DebtorBatch.Controllers
             var url = await _storage.GetDownloadUrlAsync(job.ErrorsReportObjectKey, ttl, ct);
 
             return Ok(new ErrorsDownloadResponse(url, DateTime.UtcNow.Add(ttl)));
+        }
+        [HttpGet("dev-download/{objectKey}")]
+        [AllowAnonymous] // o [Authorize] si quieres proteger
+        public async Task<IActionResult> DevDownload([FromRoute] string objectKey, CancellationToken ct)
+        {
+            await using var stream = await _storage.OpenReadAsync(objectKey, ct);
+
+            // ContentType por extensión (mejor UX para excel)
+            var provider = new FileExtensionContentTypeProvider();
+            if (!provider.TryGetContentType(objectKey, out var contentType))
+                contentType = "application/octet-stream";
+
+            return File(stream, contentType, fileDownloadName: objectKey);
         }
     }
 }

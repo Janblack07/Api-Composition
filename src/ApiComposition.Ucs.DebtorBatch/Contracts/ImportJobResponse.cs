@@ -3,12 +3,14 @@
 namespace ApiComposition.Ucs.DebtorBatch.Contracts
 {
     public sealed record ImportJobResponse(
-    Guid JobId,
-    ImportJobStatus Status,
-    DateTime CreatedAtUtc,
-    int TotalRecords,
-    int ProcessedRecords,
-    int FailedRecords,
-    string? FailureReason
-);
+       Guid JobId,
+       ImportJobStatus Status,
+       DateTime CreatedAtUtc,
+       DateTime UpdatedAtUtc,
+       int TotalRecords,
+       int ProcessedRecords,
+       int FailedRecords,
+       int ProgressPercentage,
+       string? FailureReason
+   );
 }

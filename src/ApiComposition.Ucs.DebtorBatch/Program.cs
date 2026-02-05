@@ -101,6 +101,17 @@ builder.Services.AddScoped<ITenantContextAccessor, HttpTenantContextAccessor>();
 builder.Services.AddSingleton<IImportJobStore, MemoryCacheImportJobStore>();
 builder.Services.AddSingleton<IObjectStorage, LocalDiskObjectStorage>();
 builder.Services.AddSingleton<IImportQueue, InMemoryImportQueue>();
+// Readers
+builder.Services.AddSingleton<ExcelImportFileReader>();
+builder.Services.AddSingleton<CsvImportFileReader>();
+builder.Services.AddSingleton<IImportFileReader, CompositeImportFileReader>();
+
+// Validation + reports
+builder.Services.AddSingleton<IDebtorRecordValidator, BasicDebtorRecordValidator>();
+builder.Services.AddSingleton<IErrorReportWriter, ExcelErrorReportWriter>();
+
+// Worker (ya lo tienes como hosted service)
+builder.Services.AddHostedService<ImportJobWorker>();
 
 // --- Worker (consume la cola y actualiza estados) ---
 builder.Services.AddHostedService<ImportJobWorker>();
