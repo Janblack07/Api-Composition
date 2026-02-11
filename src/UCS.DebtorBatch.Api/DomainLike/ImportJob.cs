@@ -10,6 +10,8 @@ namespace UCS.DebtorBatch.Api.DomainLike
         public Guid UserId { get; init; }
 
         public ImportJobStatus Status { get; set; } = ImportJobStatus.QUEUED;
+        public string? OriginalFileName { get; set; }
+        public string? OriginalContentType { get; set; }
 
         public string FileUrl { get; set; } = default!;
         public int TotalRecords { get; set; }

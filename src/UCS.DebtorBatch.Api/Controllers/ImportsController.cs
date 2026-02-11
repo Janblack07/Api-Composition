@@ -26,6 +26,9 @@ public sealed class ImportsController(
 {
     private readonly ImportOptions _o = opt.Value;
 
+    // =========================================================
+    // ✅ 1) POST /imports/debtors  (principal)
+    // =========================================================
     [HttpPost("debtors")]
     [Consumes("multipart/form-data")]
     [ProducesResponseType(typeof(JobResponse), StatusCodes.Status202Accepted)]
@@ -37,7 +40,6 @@ public sealed class ImportsController(
         [FromHeader(Name = "X-Correlation-ID")] string? correlationId,
         CancellationToken ct)
     {
-        // Permiso requerido (si en mock quieres permitir todo, haz que HasPermission retorne true en mock)
         if (!User.HasPermission("debtor:batch:create"))
         {
             return StatusCode(403, new ErrorResponse(
@@ -74,7 +76,6 @@ public sealed class ImportsController(
 
         correlationId ??= Guid.NewGuid().ToString();
 
-        // Claims (reales o mock)
         var tenantId = User.GetTenantId();
         var departmentId = User.GetDepartmentId();
         var userId = User.GetUserId();
@@ -91,7 +92,15 @@ public sealed class ImportsController(
             DepartmentId = departmentId,
             UserId = userId,
             Status = ImportJobStatus.QUEUED,
+
             FileUrl = fileUrl,
+
+            // ✅ NUEVO: para descargar el original correctamente
+            OriginalFileName = file.FileName,
+            OriginalContentType = string.IsNullOrWhiteSpace(file.ContentType)
+                ? "application/octet-stream"
+                : file.ContentType,
+
             TotalRecords = 0,
             ProcessedRecords = 0,
             FailedRecords = 0,
@@ -100,7 +109,6 @@ public sealed class ImportsController(
 
         await tracker.CreateAsync(job, ct);
 
-        // JWT (si existe). En mock puede estar vacío y el CoreClient puede usar token técnico/hardcoded si quieres.
         var auth = Request.Headers.Authorization.ToString();
         var jwt = auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
             ? auth["Bearer ".Length..].Trim()
@@ -111,6 +119,9 @@ public sealed class ImportsController(
         return Accepted(new JobResponse(jobId, ImportJobStatus.QUEUED, "File uploaded successfully. Processing started."));
     }
 
+    // =========================================================
+    // ✅ 2) GET /imports/jobs/{jobId}  (principal)
+    // =========================================================
     [HttpGet("jobs/{jobId:guid}")]
     [ProducesResponseType(typeof(JobStatusDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status403Forbidden)]
@@ -140,7 +151,11 @@ public sealed class ImportsController(
             TotalRecords: job.TotalRecords,
             ProcessedRecords: job.ProcessedRecords,
             FailedRecords: job.FailedRecords,
+
+            // OJO: si quieres, aquí puedes devolver el link público “bonito”
+            // pero tú pediste que salga en /errors, así que aquí lo dejo igual:
             DownloadErrorLogUrl: job.ErrorFileUrl,
+
             FailureReason: job.FailureReason,
             CreatedAt: job.CreatedAt,
             UpdatedAt: job.UpdatedAt
@@ -149,6 +164,10 @@ public sealed class ImportsController(
         return Ok(dto);
     }
 
+    // =========================================================
+    // ✅ 3) GET /imports/jobs/{jobId}/errors  (principal)
+    //     AQUÍ debe aparecer el link de descarga
+    // =========================================================
     [HttpGet("jobs/{jobId:guid}/errors")]
     [ProducesResponseType(typeof(ErrorLogResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
@@ -182,13 +201,71 @@ public sealed class ImportsController(
         if (job.FailedRecords <= 0 || string.IsNullOrWhiteSpace(job.ErrorFileUrl))
             return NoContent();
 
+        // ✅ CAMBIO CLAVE:
+        // Ya NO devolvemos presigned (Drive/local), devolvemos un link interno del API
         var expiresIn = TimeSpan.FromMinutes(_o.PresignedUrlExpirationMinutes);
-        var url = await storage.GetPresignedUrlAsync(job.ErrorFileUrl!, expiresIn, ct);
+
+        var url = Url.Action(nameof(DownloadErrorLog), values: new { jobId })
+                  ?? $"/imports/jobs/{jobId}/errors/download";
 
         return Ok(new ErrorLogResponse(
             DownloadUrl: url,
             ExpiresAt: DateTimeOffset.UtcNow.Add(expiresIn),
             RecordCount: job.FailedRecords
         ));
+    }
+
+    // =========================================================
+    // 🔒 Endpoint interno: descarga CSV de errores
+    // NO aparece en Swagger (para que “solo existan 3 endpoints” visibles)
+    // GET /imports/jobs/{jobId}/errors/download
+    // =========================================================
+    [ApiExplorerSettings(IgnoreApi = true)]
+    [HttpGet("jobs/{jobId:guid}/errors/download")]
+    public async Task<IActionResult> DownloadErrorLog(Guid jobId, CancellationToken ct)
+    {
+        var tenantId = User.GetTenantId();
+
+        var job = await repo.GetAsync(jobId, ct);
+        if (job is null)
+            return NotFound();
+
+        if (job.TenantId != tenantId)
+            return Forbid();
+
+        if (job.FailedRecords <= 0 || string.IsNullOrWhiteSpace(job.ErrorFileUrl))
+            return NotFound();
+
+        // ✅ FIX del error “Cannot access a closed file”:
+        // NO usar "using var stream". Retornamos el stream vivo y ASP.NET lo dispone al final.
+        var stream = await storage.OpenReadAsync(job.ErrorFileUrl!, ct);
+
+        return File(stream, "text/csv", $"job-{jobId:N}-errors.csv");
+    }
+
+    // =========================================================
+    // 🔒 Endpoint interno: descarga archivo original
+    // NO aparece en Swagger
+    // GET /imports/jobs/{jobId}/file
+    // =========================================================
+    [ApiExplorerSettings(IgnoreApi = true)]
+    [HttpGet("jobs/{jobId:guid}/file")]
+    public async Task<IActionResult> DownloadOriginalFile(Guid jobId, CancellationToken ct)
+    {
+        var tenantId = User.GetTenantId();
+
+        var job = await repo.GetAsync(jobId, ct);
+        if (job is null)
+            return NotFound();
+
+        if (job.TenantId != tenantId)
+            return Forbid();
+
+        var stream = await storage.OpenReadAsync(job.FileUrl, ct);
+
+        var fileName = job.OriginalFileName ?? $"job-{jobId:N}-source";
+        var contentType = job.OriginalContentType ?? "application/octet-stream";
+
+        return File(stream, contentType, fileName);
     }
 }

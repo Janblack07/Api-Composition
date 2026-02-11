@@ -69,6 +69,7 @@ builder.Services.AddSingleton<ImportJobTracker>();
 
 // Storage local (App_Data)
 builder.Services.AddSingleton<IFileStorage, LocalFileStorage>();
+builder.Services.AddHostedService<LocalStorageCleanupHostedService>();
 
 // Excel parser
 builder.Services.AddSingleton<IExcelParser, MiniExcelAdapter>();
@@ -84,6 +85,8 @@ builder.Services.AddHttpClient<IDebtorBatchClient, CoreDebtorHttpClient>();
 
 // Dispatcher
 builder.Services.AddSingleton<ImportJobDispatcher>();
+builder.Services.Configure<ImportOptions>(builder.Configuration.GetSection("Import"));
+
 
 // Worker (resoluble + hosted)
 builder.Services.AddSingleton<IImportJobExecutor, ImportBackgroundWorker>();

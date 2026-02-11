@@ -44,12 +44,7 @@ public sealed class CoreDebtorHttpClient(
             Content = JsonContent.Create(request)
         };
 
-        // --- Headers (punto 10)
-        // Authorization: Bearer {JWT}
-        // X-Tenant-ID: {tenantId}
-        // X-Department-ID: {departmentId}
-        // X-Correlation-ID: {correlationId}
-        // Content-Type: application/json (lo pone JsonContent.Create)
+        
 
         // Si no tienes JWT real aún, userJwt puede ser "" (eso te dará 401/400 en Core dependiendo)
         msg.Headers.Authorization = new AuthenticationHeaderValue("Bearer", userJwt ?? string.Empty);

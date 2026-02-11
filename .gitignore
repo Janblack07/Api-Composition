@@ -65,12 +65,6 @@ publish/
 # =========================
 TestResults/
 
-# =========================
-# Local storage (tu BFF guarda archivos aquí)
-# =========================
-src/UCS.DebtorBatch.Api/storage/
-storage/
-*-errors.csv
 
 # =========================
 # Swagger / generated

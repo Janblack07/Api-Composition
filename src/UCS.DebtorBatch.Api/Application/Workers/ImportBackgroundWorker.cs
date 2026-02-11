@@ -36,12 +36,12 @@ public sealed class ImportBackgroundWorker(
     }
 
     public async Task ExecuteAsync(
-        Guid jobId,
-        string userJwt,
-        Guid tenantId,
-        Guid departmentId,
-        string correlationId,
-        CancellationToken ct)
+    Guid jobId,
+    string userJwt,
+    Guid tenantId,
+    Guid departmentId,
+    string correlationId,
+    CancellationToken ct)
     {
         var job = await repo.GetAsync(jobId, ct);
         if (job is null) return;
@@ -69,7 +69,7 @@ public sealed class ImportBackgroundWorker(
             int processed = 0;
             int failed = 0;
 
-            // Fail-fast: primeras 100 filas
+            // Fail-fast
             int inspected = 0;
             int invalid = 0;
 
@@ -83,21 +83,29 @@ public sealed class ImportBackgroundWorker(
                 ct.ThrowIfCancellationRequested();
                 total++;
 
+                // contamos filas inspeccionadas hasta N
+                if (inspected < _o.FailFastInspectRows) inspected++;
+
                 var rowErrors = validate(record).ToList();
                 if (rowErrors.Count > 0)
                 {
                     failed++;
                     errors.AddRange(rowErrors);
 
-                    if (inspected < 100)
+                    if (inspected <= _o.FailFastInspectRows) // dentro del muestreo
                     {
-                        inspected++;
                         invalid++;
 
-                        if (FailFastEvaluator.ShouldFailFast(inspected, invalid, _o.FailFastThresholdPercent))
+                        if (FailFastEvaluator.ShouldFailFast(
+                            inspectedRows: inspected,
+                            invalidRows: invalid,
+                            thresholdPercent: _o.FailFastThresholdPercent,
+                            inspectRowsTarget: _o.FailFastInspectRows,
+                            endOfFile: false))
                         {
-                            logger.LogWarning("FAIL-FAST TRIGGERED -> inspected={Inspected} invalid={Invalid} threshold={Threshold}%",
-                                inspected, invalid, _o.FailFastThresholdPercent);
+                            logger.LogWarning(
+                                "FAIL-FAST TRIGGERED -> inspected={Inspected} invalid={Invalid} threshold={Threshold}% targetRows={Target}",
+                                inspected, invalid, _o.FailFastThresholdPercent, _o.FailFastInspectRows);
 
                             await FailJobAsync(job, errors, total, processed, failed, ct, "FAIL_FAST_TRIGGERED");
                             return;
@@ -107,8 +115,6 @@ public sealed class ImportBackgroundWorker(
                     await tracker.UpdateProgressAsync(job, total, processed, failed, ct);
                     continue;
                 }
-
-                if (inspected < 100) inspected++;
 
                 validBuffer.Add(record);
 
@@ -121,6 +127,22 @@ public sealed class ImportBackgroundWorker(
                     validBuffer.Clear();
                     await tracker.UpdateProgressAsync(job, total, processed, failed, ct);
                 }
+            }
+
+            // EOF: Si el archivo tenía < N filas, aquí se evalúa fail-fast con las filas reales
+            if (FailFastEvaluator.ShouldFailFast(
+                inspectedRows: inspected,
+                invalidRows: invalid,
+                thresholdPercent: _o.FailFastThresholdPercent,
+                inspectRowsTarget: _o.FailFastInspectRows,
+                endOfFile: true))
+            {
+                logger.LogWarning(
+                    "FAIL-FAST TRIGGERED (EOF) -> inspected={Inspected} invalid={Invalid} threshold={Threshold}% targetRows={Target}",
+                    inspected, invalid, _o.FailFastThresholdPercent, _o.FailFastInspectRows);
+
+                await FailJobAsync(job, errors, total, processed, failed, ct, "FAIL_FAST_TRIGGERED");
+                return;
             }
 
             // Remanente
