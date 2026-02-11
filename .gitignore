@@ -1,0 +1,80 @@
+@'
+# =========================
+# .NET / Visual Studio
+# =========================
+bin/
+obj/
+[Bb]uild/
+[Dd]ebug*/
+[Rr]elease*/
+x64/
+x86/
+[Aa]ny [Cc]pu/
+[Ll]og/
+logs/
+
+# VS
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Rider / JetBrains
+.idea/
+*.sln.iml
+
+# VS Code
+.vscode/
+
+# =========================
+# NuGet
+# =========================
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+
+# =========================
+# OS / misc
+# =========================
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+*.bak
+
+# =========================
+# Secrets / env
+# =========================
+.env
+.env.*
+secrets.json
+appsettings.*.json
+!appsettings.json
+!appsettings.Development.json
+
+# =========================
+# Publish artifacts
+# =========================
+publish/
+**/publish/
+
+# =========================
+# Test results
+# =========================
+TestResults/
+
+# =========================
+# Local storage (tu BFF guarda archivos aquí)
+# =========================
+src/UCS.DebtorBatch.Api/storage/
+storage/
+*-errors.csv
+
+# =========================
+# Swagger / generated
+# =========================
+swagger.json
+openapi.json
+'@ | Set-Content -Encoding UTF8 .gitignore
