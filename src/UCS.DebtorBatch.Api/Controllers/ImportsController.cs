@@ -2,7 +2,6 @@
 
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
-using Swashbuckle.AspNetCore.Annotations;
 using UCS.DebtorBatch.Api.Application.Abstractions;
 using UCS.DebtorBatch.Api.Application.Import;
 using UCS.DebtorBatch.Api.Contracts.Requests;
@@ -27,7 +26,7 @@ public sealed class ImportsController(
     private readonly ImportOptions _o = opt.Value;
 
     // =========================================================
-    // ✅ 1) POST /imports/debtors  (principal)
+    // POST /imports/debtors
     // =========================================================
     [HttpPost("debtors")]
     [Consumes("multipart/form-data")]
@@ -95,7 +94,6 @@ public sealed class ImportsController(
 
             FileUrl = fileUrl,
 
-            // ✅ NUEVO: para descargar el original correctamente
             OriginalFileName = file.FileName,
             OriginalContentType = string.IsNullOrWhiteSpace(file.ContentType)
                 ? "application/octet-stream"
@@ -120,7 +118,7 @@ public sealed class ImportsController(
     }
 
     // =========================================================
-    // ✅ 2) GET /imports/jobs/{jobId}  (principal)
+    // GET /imports/jobs/{jobId}
     // =========================================================
     [HttpGet("jobs/{jobId:guid}")]
     [ProducesResponseType(typeof(JobStatusDto), StatusCodes.Status200OK)]
@@ -151,11 +149,7 @@ public sealed class ImportsController(
             TotalRecords: job.TotalRecords,
             ProcessedRecords: job.ProcessedRecords,
             FailedRecords: job.FailedRecords,
-
-            // OJO: si quieres, aquí puedes devolver el link público “bonito”
-            // pero tú pediste que salga en /errors, así que aquí lo dejo igual:
             DownloadErrorLogUrl: job.ErrorFileUrl,
-
             FailureReason: job.FailureReason,
             CreatedAt: job.CreatedAt,
             UpdatedAt: job.UpdatedAt
@@ -165,8 +159,8 @@ public sealed class ImportsController(
     }
 
     // =========================================================
-    // ✅ 3) GET /imports/jobs/{jobId}/errors  (principal)
-    //     AQUÍ debe aparecer el link de descarga
+    // GET /imports/jobs/{jobId}/errors
+    // Devuelve link ABSOLUTO de descarga
     // =========================================================
     [HttpGet("jobs/{jobId:guid}/errors")]
     [ProducesResponseType(typeof(ErrorLogResponse), StatusCodes.Status200OK)]
@@ -201,24 +195,29 @@ public sealed class ImportsController(
         if (job.FailedRecords <= 0 || string.IsNullOrWhiteSpace(job.ErrorFileUrl))
             return NoContent();
 
-        // ✅ CAMBIO CLAVE:
-        // Ya NO devolvemos presigned (Drive/local), devolvemos un link interno del API
         var expiresIn = TimeSpan.FromMinutes(_o.PresignedUrlExpirationMinutes);
 
-        var url = Url.Action(nameof(DownloadErrorLog), values: new { jobId })
-                  ?? $"/imports/jobs/{jobId}/errors/download";
+        // ✅ URL ABSOLUTA al endpoint de descarga
+        var absolute = Url.Action(
+            action: nameof(DownloadErrorLog),
+            controller: null,
+            values: new { jobId },
+            protocol: Request.Scheme,
+            host: Request.Host.ToString()
+        );
+
+        var downloadUrl = absolute ?? $"{Request.Scheme}://{Request.Host}/imports/jobs/{jobId}/errors/download";
 
         return Ok(new ErrorLogResponse(
-            DownloadUrl: url,
+            DownloadUrl: downloadUrl,
             ExpiresAt: DateTimeOffset.UtcNow.Add(expiresIn),
             RecordCount: job.FailedRecords
         ));
     }
 
     // =========================================================
-    // 🔒 Endpoint interno: descarga CSV de errores
-    // NO aparece en Swagger (para que “solo existan 3 endpoints” visibles)
-    // GET /imports/jobs/{jobId}/errors/download
+    // 🔒 GET /imports/jobs/{jobId}/errors/download
+    // Descarga XLSX
     // =========================================================
     [ApiExplorerSettings(IgnoreApi = true)]
     [HttpGet("jobs/{jobId:guid}/errors/download")]
@@ -236,17 +235,18 @@ public sealed class ImportsController(
         if (job.FailedRecords <= 0 || string.IsNullOrWhiteSpace(job.ErrorFileUrl))
             return NotFound();
 
-        // ✅ FIX del error “Cannot access a closed file”:
-        // NO usar "using var stream". Retornamos el stream vivo y ASP.NET lo dispone al final.
         var stream = await storage.OpenReadAsync(job.ErrorFileUrl!, ct);
 
-        return File(stream, "text/csv", $"job-{jobId:N}-errors.csv");
+        return File(
+            stream,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            $"job-{jobId:N}-errors.xlsx"
+        );
     }
 
     // =========================================================
-    // 🔒 Endpoint interno: descarga archivo original
-    // NO aparece en Swagger
-    // GET /imports/jobs/{jobId}/file
+    // 🔒 GET /imports/jobs/{jobId}/file
+    // Descarga el archivo original subido
     // =========================================================
     [ApiExplorerSettings(IgnoreApi = true)]
     [HttpGet("jobs/{jobId:guid}/file")]

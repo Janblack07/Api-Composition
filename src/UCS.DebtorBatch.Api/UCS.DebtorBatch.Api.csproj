@@ -12,6 +12,7 @@
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.2" />
     <PackageReference Include="MiniExcel" Version="1.42.0" />
     <PackageReference Include="Polly" Version="8.6.5" />
+	  <PackageReference Include="ClosedXML" Version="0.102.2" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.2" />
   </ItemGroup>
 

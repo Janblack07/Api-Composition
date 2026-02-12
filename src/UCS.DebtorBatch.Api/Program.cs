@@ -91,6 +91,8 @@ builder.Services.Configure<ImportOptions>(builder.Configuration.GetSection("Impo
 // Worker (resoluble + hosted)
 builder.Services.AddSingleton<IImportJobExecutor, ImportBackgroundWorker>();
 builder.Services.AddHostedService(sp => (ImportBackgroundWorker)sp.GetRequiredService<IImportJobExecutor>());
+builder.Services.Configure<ErrorPresentationOptions>(
+    builder.Configuration.GetSection("ErrorPresentation"));
 
 var app = builder.Build();
 
