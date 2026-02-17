@@ -7,8 +7,15 @@
 
     public sealed class ErrorMapping
     {
-        public string Contains { get; set; } = "";     // match simple
-        public string Friendly { get; set; } = "";     // mensaje para usuario
-        public string Hint { get; set; } = "";         // sugerencia
+
+        public string Contains { get; set; } = "";
+
+        public string? Field { get; set; }
+        public string? Rule { get; set; }
+
+        public string Friendly { get; set; } = "";
+        public string Hint { get; set; } = "";
+
+        public int Priority { get; set; } = 0;
     }
 }

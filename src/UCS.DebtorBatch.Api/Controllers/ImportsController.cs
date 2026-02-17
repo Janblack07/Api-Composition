@@ -195,7 +195,7 @@ public sealed class ImportsController(
         if (job.FailedRecords <= 0 || string.IsNullOrWhiteSpace(job.ErrorFileUrl))
             return NoContent();
 
-        var expiresIn = TimeSpan.FromMinutes(_o.PresignedUrlExpirationMinutes);
+        var expiresIn = TimeSpan.FromDays(_o.FileRetentionDays);
 
         // ✅ URL ABSOLUTA al endpoint de descarga
         var absolute = Url.Action(

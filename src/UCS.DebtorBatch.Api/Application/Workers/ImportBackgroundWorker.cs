@@ -1,13 +1,10 @@
-﻿// File: src/UCS.DebtorBatch.Api/Application/Workers/ImportBackgroundWorker.cs
-
-using ClosedXML.Excel;
+﻿using ClosedXML.Excel;
 using Microsoft.Extensions.Options;
 using UCS.DebtorBatch.Api.Application.Abstractions;
 using UCS.DebtorBatch.Api.Application.Import;
 using UCS.DebtorBatch.Api.Application.Validation;
 using UCS.DebtorBatch.Api.Contracts.Shared;
 using UCS.DebtorBatch.Api.DomainLike;
-using UCS.DebtorBatch.Api.Infrastructure.Core;
 using UCS.DebtorBatch.Api.Options;
 
 namespace UCS.DebtorBatch.Api.Application.Workers;
@@ -45,7 +42,20 @@ public sealed class ImportBackgroundWorker(
         while (!stoppingToken.IsCancellationRequested)
         {
             var work = await queue.DequeueAsync(stoppingToken);
-            await work(stoppingToken);
+
+            try
+            {
+                await work(stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                // shutdown normal
+            }
+            catch (Exception ex)
+            {
+                // ✅ IMPORTANTÍSIMO: no dejar que una tarea tumbe todo el Host
+                logger.LogError(ex, "Background job crashed but host will continue running.");
+            }
         }
     }
 
@@ -251,13 +261,15 @@ public sealed class ImportBackgroundWorker(
         var tech = (e.Message ?? "").Trim();
 
         var (field, rule) = InferFieldAndRule(tech);
-        var (friendly, hint) = ApplyMappingsOrFallback(tech, field, rule);
+
+        // ✅ ahora ApplyMappingsOrFallback también devuelve field/rule si hay mapping
+        var (finalField, finalRule, friendly, hint) = ApplyMappingsOrFallback(tech, field, rule);
 
         return new PresentedError(
             RowIndex: e.RowIndex,
             ExternalKey: e.ExternalKey ?? "",
-            Field: field,
-            Rule: rule,
+            Field: finalField,
+            Rule: finalRule,
             Friendly: friendly,
             Hint: hint,
             Technical: tech
@@ -266,7 +278,7 @@ public sealed class ImportBackgroundWorker(
 
     private (string field, string rule) InferFieldAndRule(string tech)
     {
-        // Ej: "ExternalKey/Identificación is required"
+        // Caso genérico: "ExternalKey/Identificación is required"
         if (tech.Contains(" is required", StringComparison.OrdinalIgnoreCase) && tech.Contains('/'))
         {
             var parts = tech.Split('/', 2);
@@ -275,49 +287,29 @@ public sealed class ImportBackgroundWorker(
             return (string.IsNullOrWhiteSpace(name) ? "Campo" : name, "Requerido");
         }
 
-        if (tech.StartsWith("Amount", StringComparison.OrdinalIgnoreCase))
-            return ("Monto Deuda", "Mayor a 0");
-
-        if (tech.StartsWith("DueDate", StringComparison.OrdinalIgnoreCase))
-            return ("Fecha Vencimiento", "Fecha válida");
-
-        if (tech.Contains("Invalid email format", StringComparison.OrdinalIgnoreCase))
-            return ("Email", "Formato válido");
-
-        if (tech.Contains("Invalid phone format", StringComparison.OrdinalIgnoreCase))
-            return ("Teléfono", "Formato válido");
-
-        if (tech.Contains("Invalid identification", StringComparison.OrdinalIgnoreCase))
-            return ("Identificación", "Formato / Algoritmo");
-
         return ("Dato", "Validación");
     }
 
-    private (string friendly, string hint) ApplyMappingsOrFallback(string tech, string field, string rule)
+    private (string field, string rule, string friendly, string hint) ApplyMappingsOrFallback(string tech, string field, string rule)
     {
-        var map = _ep.Mappings.FirstOrDefault(m =>
-            !string.IsNullOrWhiteSpace(m.Contains) &&
-            tech.Contains(m.Contains, StringComparison.OrdinalIgnoreCase));
+        var map = _ep.Mappings
+            .Where(m => !string.IsNullOrWhiteSpace(m.Contains))
+            .OrderByDescending(m => m.Priority)
+            .FirstOrDefault(m => tech.Contains(m.Contains, StringComparison.OrdinalIgnoreCase));
 
         if (map is not null)
-            return (map.Friendly, map.Hint);
+        {
+            // ✅ Si hay mapping, también fija Field/Rule para que no salga "Dato"
+            var f = string.IsNullOrWhiteSpace(map.Field) ? field : map.Field!;
+            var r = string.IsNullOrWhiteSpace(map.Rule) ? rule : map.Rule!;
+            return (f, r, map.Friendly, map.Hint);
+        }
 
+        // fallback mínimo
         if (rule.Equals("Requerido", StringComparison.OrdinalIgnoreCase))
-            return ($"{field} es obligatorio.", $"Completa la columna \"{field}\" y vuelve a intentar.");
+            return (field, rule, $"{field} es obligatorio.", $"Completa la columna \"{field}\" y vuelve a intentar.");
 
-        if (field.Equals("Monto Deuda", StringComparison.OrdinalIgnoreCase))
-            return ("Monto inválido.", "El monto debe ser mayor a 0. Ejemplo: 25.50");
-
-        if (field.Equals("Fecha Vencimiento", StringComparison.OrdinalIgnoreCase))
-            return ("Fecha inválida.", "Usa formato YYYY-MM-DD (ej: 2026-02-12).");
-
-        if (field.Equals("Email", StringComparison.OrdinalIgnoreCase))
-            return ("Correo inválido.", "Ejemplo válido: usuario@dominio.com (sin espacios).");
-
-        if (field.Equals("Teléfono", StringComparison.OrdinalIgnoreCase))
-            return ("Teléfono inválido.", "Ejemplo: +593987654321 o 0987654321 (sin espacios).");
-
-        return (tech, "Revisa el valor ingresado y vuelve a intentar.");
+        return (field, rule, tech, "Revisa el valor ingresado y vuelve a intentar.");
     }
 
     // =========================================================
@@ -439,7 +431,7 @@ public sealed class ImportBackgroundWorker(
             ws.Column(3).Width = 18;
             ws.Column(4).Width = 28;
             ws.Column(5).Width = 45;
-            ws.Column(6).Width = 45;
+            ws.Column(6).Width = 60;
             ws.Column(7).Width = 14;
 
             ws.Column(1).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;

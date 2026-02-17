@@ -26,10 +26,6 @@ namespace UCS.DebtorBatch.Api.Application.Import
 
             // Aquí (modo local) guardamos en disco. En S3 sería SaveAsync->s3://...
             var fileUrl = await storage.SaveAsync(fileStream, originalFileName, ct);
-
-            // Aquí tenant/department/user lo pondrá el controller desde claims (reales o mock)
-            // El service solo crea el job con placeholders y el controller setea ids correctos.
-            // (Más abajo lo hacemos desde el controller)
             return jobId;
         }
 

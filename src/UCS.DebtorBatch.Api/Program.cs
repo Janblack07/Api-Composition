@@ -1,4 +1,3 @@
-// File: src/UCS.DebtorBatch.Api/Program.cs
 
 using Microsoft.OpenApi;
 using System.Text.Json.Serialization;
@@ -16,23 +15,43 @@ using UCS.DebtorBatch.Api.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
-builder.Services.AddMemoryCache();
+// ==============================
+// MVC + JSON
+// ==============================
 builder.Services.AddControllers()
     .AddJsonOptions(o =>
     {
         o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
     });
 
-// Options
+// ==============================
+// Host / Background services behavior
+// ==============================
+builder.Services.Configure<HostOptions>(o =>
+{
+    
+    o.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
+});
+
+// ==============================
+// Cache
+// ==============================
+builder.Services.AddMemoryCache();
+
+// ==============================
+// Options (UNA sola fuente de verdad: appsettings)
+// ==============================
 builder.Services.Configure<ImportOptions>(builder.Configuration.GetSection("Import"));
 builder.Services.Configure<CoreOptions>(builder.Configuration.GetSection("Core"));
+builder.Services.Configure<ErrorPresentationOptions>(builder.Configuration.GetSection("ErrorPresentation"));
+builder.Services.Configure<MockIdentityOptions>(builder.Configuration.GetSection("MockIdentity"));
 
+// ==============================
 // Swagger
+// ==============================
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
-
     c.SwaggerDoc("v1", new OpenApiInfo
     {
         Title = "UCS.DebtorBatch - API de Carga Masiva",
@@ -49,9 +68,9 @@ builder.Services.AddSwaggerGen(c =>
     });
 
     c.AddSecurityRequirement(_ => new OpenApiSecurityRequirement
-{
-    { new OpenApiSecuritySchemeReference("Bearer"), new List<string>() }
-});
+    {
+        { new OpenApiSecuritySchemeReference("Bearer"), new List<string>() }
+    });
 });
 
 // ==============================
@@ -67,7 +86,7 @@ builder.Services.AddSingleton<IImportJobRepository, MemoryCacheJobRepository>();
 // Tracker
 builder.Services.AddSingleton<ImportJobTracker>();
 
-// Storage local (App_Data)
+// Storage local (./storage)
 builder.Services.AddSingleton<IFileStorage, LocalFileStorage>();
 builder.Services.AddHostedService<LocalStorageCleanupHostedService>();
 
@@ -80,34 +99,41 @@ builder.Services.AddSingleton<IValidationRuleProvider, MockValidationRuleProvide
 // Validator factory
 builder.Services.AddSingleton<DynamicValidatorFactory>();
 
-// Core client (real) - usa CoreOptions.BaseUrl
+// Core client (real)
 builder.Services.AddHttpClient<IDebtorBatchClient, CoreDebtorHttpClient>();
 
 // Dispatcher
 builder.Services.AddSingleton<ImportJobDispatcher>();
-builder.Services.Configure<ImportOptions>(builder.Configuration.GetSection("Import"));
 
+// ==============================
+// Worker (Executor + Hosted)
+// ==============================
 
-// Worker (resoluble + hosted)
+// 1) Registras el executor
 builder.Services.AddSingleton<IImportJobExecutor, ImportBackgroundWorker>();
+
+// 2) Lo expones como HostedService (sin duplicarlo)
 builder.Services.AddHostedService(sp => (ImportBackgroundWorker)sp.GetRequiredService<IImportJobExecutor>());
-builder.Services.Configure<ErrorPresentationOptions>(
-    builder.Configuration.GetSection("ErrorPresentation"));
 
 var app = builder.Build();
 
-// Middleware mock identity (para no depender JWT real)
+// ==============================
+// Middleware
+// ==============================
+
+// OJO: esto es para DEV/QA. En prod deberías condicionarlo por config/env.
 app.UseMiddleware<MockIdentityMiddleware>();
 
 app.UseSwagger();
 app.UseSwaggerUI();
 
 app.UseHttpsRedirection();
+
 app.UseAuthorization();
 
 app.MapControllers();
+
 app.MapGet("/", () => Results.Redirect("/swagger"))
    .ExcludeFromDescription();
-
 
 app.Run();
