@@ -1,6 +1,4 @@
-﻿// File: src/UCS.DebtorBatch.Api/Controllers/ImportsController.cs
-
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using UCS.DebtorBatch.Api.Application.Abstractions;
 using UCS.DebtorBatch.Api.Application.Import;

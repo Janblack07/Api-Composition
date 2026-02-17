@@ -17,23 +17,38 @@ public sealed class MiniExcelAdapter : IExcelParser
     private const string ColDue = "Fecha Vencimiento";
     private const string ColConcept = "Concepto";
 
-    public async IAsyncEnumerable<DebtorRecord> ParseAsync(Stream fileStream, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    public async IAsyncEnumerable<DebtorRecord> ParseAsync(
+    Stream fileStream,
+    string fileName,
+    [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
-        // MiniExcel devuelve rows como IDictionary<string, object?>
-        // useHeaderRow:true => la primera fila son headers
-        var rows = MiniExcel.Query(fileStream, useHeaderRow: true);
+        // ✅ Por seguridad
+        if (fileStream.CanSeek) fileStream.Position = 0;
 
-        int rowIndex = 1; // header = 1, primera data row = 2
+        var ext = Path.GetExtension(fileName).ToLowerInvariant();
+
+        IEnumerable<object> rows;
+
+        if (ext == ".csv")
+        {
+            // ✅ fuerza CSV (evita detección fallida)
+            rows = MiniExcel.Query(fileStream, useHeaderRow: true, excelType: ExcelType.CSV);
+        }
+        else
+        {
+            rows = MiniExcel.Query(fileStream, useHeaderRow: true);
+        }
+
+        int rowIndex = 1;
 
         foreach (var row in rows)
         {
             ct.ThrowIfCancellationRequested();
             rowIndex++;
 
-            // MiniExcel usa keys tal como vienen en el header
             var dict = (IDictionary<string, object?>)row;
 
-            var rec = new DebtorRecord
+            yield return new DebtorRecord
             {
                 RowIndex = rowIndex,
                 ExternalKey = GetString(dict, ColId),
@@ -45,8 +60,6 @@ public sealed class MiniExcelAdapter : IExcelParser
                 DueDate = GetDate(dict, ColDue),
                 Concept = GetString(dict, ColConcept)
             };
-
-            yield return rec;
         }
 
         await Task.CompletedTask;

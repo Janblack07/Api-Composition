@@ -105,7 +105,7 @@ public sealed class ImportBackgroundWorker(
 
             await tracker.UpdateAsync(job, ImportJobStatus.PROCESSING, ct);
 
-            await foreach (var record in parser.ParseAsync(file, ct))
+            await foreach (var record in parser.ParseAsync(file, job.OriginalFileName ?? job.FileUrl, ct))
             {
                 ct.ThrowIfCancellationRequested();
                 total++;
